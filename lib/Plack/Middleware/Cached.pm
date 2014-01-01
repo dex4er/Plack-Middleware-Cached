@@ -1,13 +1,14 @@
 ﻿use strict;
 use warnings;
 package Plack::Middleware::Cached;
-#ABSTRACT: Glues a cache to your PSGI application
 
 use parent 'Plack::Middleware';
 use Scalar::Util qw(blessed reftype);
 use Carp 'croak';
 use Plack::Util::Accessor qw(cache key set env);
 use utf8;
+
+our $VERSION = '0.14';
 
 sub prepare_app {
     my ($self) = @_;
@@ -57,29 +58,32 @@ sub call {
     # pass through and cache afterwards
     my $response = $self->app_code->($env);
 
-    return $self->response_cb($response, sub {
-        my ($ret) = @_;
-        my $seen;
-        my $body = '';
-        return sub {
-            my ($chunk) = @_;
-            if ($seen++ and not defined $chunk) {
-                my $new_response = [ $ret->[0], $ret->[1], [ $body ] ];
-                $self->cache_reponse($key, $new_response, $env);
-                return;
-            }
-            $body .= $chunk if defined $chunk;
-            return $chunk;
-        };
-    }) if ref $response eq 'CODE';
-
-    $self->cache_reponse($key, $response, $env);
+    # streaming response 
+    if (ref $response eq 'CODE') {
+        $response = $self->response_cb($response, sub {
+            my ($ret) = @_;
+            my $seen;
+            my $body = '';
+            return sub {
+                my ($chunk) = @_;
+                if ($seen++ and not defined $chunk) {
+                    my $new_response = [ $ret->[0], $ret->[1], [ $body ] ];
+                    $self->cache_response($key, $new_response, $env);
+                    return;
+                }
+                $body .= $chunk if defined $chunk;
+                return $chunk;
+            };
+        });
+    } else {
+        $self->cache_response($key, $response, $env);
+    }
 
     return $response;
 }
 
-
-sub cache_reponse {
+# cache a response based on configuration of this middleware
+sub cache_response {
     my ($self, $key, $response, $env) = @_;
 
     my @options = $self->set->($response, $env);
@@ -114,6 +118,10 @@ sub can_cache {
 }
 
 1;
+
+=head1 NAME
+
+Plack::Middleware::Cached - Glues a cache to your PSGI application
 
 =head1 SYNOPSIS
 
@@ -186,6 +194,8 @@ response came from the cache or from the wrapped application like this:
         $app;
     },
 
+Caching delayed/streaming responses is supported as well.
+
 =head1 CONFIGURATION
 
 =over 4
@@ -235,10 +245,6 @@ You can also use this method to skip selected responses from caching:
 
 =back
 
-=head1 LIMITATIONS
-
-The current version of this module does not support streaming responses.
-
 =head1 SEE ALSO
 
 There already are several modules for caching PSGI applications:
@@ -248,4 +254,15 @@ same name, available at L<https://github.com/pnu/Plack-Middleware-Cache>.
 
 =encoding utf8
 
+=head1 AUTHOR
+ 
+Jakob Voß
+ 
+=head1 COPYRIGHT AND LICENSE
+ 
+This software is copyright (c) 2013 by Jakob Voß.
+ 
+This is free software; you can redistribute it and/or modify it under
+the same terms as the Perl 5 programming language system itself.
+ 
 =cut
